@@ -339,6 +339,7 @@ async def text_to_pic(
     text: str,
     css_path: str = "",
     *,
+    dpi: float = 96.0,
     max_width: int = 500,
     allow_refit: bool = True,
     image_format: Literal["png", "jpeg"] = "png",
@@ -350,6 +351,7 @@ async def text_to_pic(
     Args:
         text (str): 纯文本, 可多行
         css_path (str, optional): css文件路径
+        dpi (float, optional): DPI，默认为 96.0
         max_width (int, optional): 图片最大宽度，默认为 500
         allow_refit (bool, optional): 允许根据内容缩小宽度，默认为 True
         image_format ("png" | "jpeg", optional): 图片格式, 默认为 "png"
@@ -364,6 +366,7 @@ async def text_to_pic(
             text=text,
             css=await read_file(css_path) if css_path else await read_tpl("text.css"),
         ),
+        dpi=dpi,
         max_width=max_width,
         base_url=f"file://{css_path or TEMPLATES_PATH}",
         allow_refit=allow_refit,
@@ -377,6 +380,7 @@ async def md_to_pic(
     md_path: str = "",
     css_path: str = "",
     *,
+    dpi: float = 96.0,
     max_width: int = 500,
     img_fetch_fn: ImgFetchFn = combined_img_fetcher,
     allow_refit: bool = True,
@@ -390,6 +394,7 @@ async def md_to_pic(
         md (str, optional): markdown 格式文本
         md_path (str, optional): markdown 文件路径
         css_path (str,  optional): css文件路径
+        dpi (float, optional): DPI，默认为 96.0
         max_width (int, optional): 图片最大宽度，默认为 500
         img_fetch_fn (ImgFetchFn, optional): 图片获取函数，默认为 combined_img_fetcher
         allow_refit (bool, optional): 允许根据内容缩小宽度，默认为 True
@@ -431,6 +436,7 @@ async def md_to_pic(
 
     return await html_to_pic(
         html=await template.render_async(md=md, css=css),
+        dpi=dpi,
         max_width=max_width,
         device_height=10,
         base_url=f"file://{css_path or TEMPLATES_PATH}",
@@ -478,6 +484,7 @@ async def template_to_pic(
     templates: Mapping[Any, Any],
     filters: None | Mapping[str, Any] = None,
     *,
+    dpi: float = 96.0,
     max_width: int = 500,
     device_height: int = 600,
     base_url: str | None = None,
@@ -496,6 +503,7 @@ async def template_to_pic(
         template_name (str): 模板名
         templates (Mapping[Any, Any]): 模板参数
         filters (Mapping[str, Any] | None): 自定义过滤器
+        dpi (float, optional): DPI，默认为 96.0
         max_width (int, optional): 图片最大宽度，默认为 500
         device_height (int, optional): 设备高度，默认为 800
         base_url (str | None, optional): 基础路径，默认为 "file://{template.filename}"
@@ -526,6 +534,7 @@ async def template_to_pic(
     return await html_to_pic(
         html=await template.render_async(**templates),
         base_url=base_url,
+        dpi=dpi,
         max_width=max_width,
         device_height=device_height,
         img_fetch_fn=img_fetch_fn,
