@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-htmlkit"
-version = "0.1.0-rc3"
+version = "0.1.0-rc4"
 description = "Lightweight HTML rendering plugin for NoneBot"
 readme = "README.md"
 requires-python = ">=3.10"
