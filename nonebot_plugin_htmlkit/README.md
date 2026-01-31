@@ -84,48 +84,6 @@ FC_LANG: str
 FONTCONFIG_USE_MMAP: str
 ```
 
-### 构建说明
-
-1. [安装 Xmake](https://xmake.io/zh/guide/quick-start#installation)
-1. 初始化环境
-
-   使用 Xmake 时必须激活 Python 虚拟环境，并且安装 `build` 依赖组。
-
-   ```bash
-   # 拉取子模块
-   git submodule update --init --recursive
-   # 创建虚拟环境并安装依赖，同时避免直接构建项目
-   uv sync --no-install-workspace
-   # 激活虚拟环境，请使用对应 shell 的命令
-   source .venv/bin/activate
-   # 配置 Xmake 项目并安装依赖（由于有大量依赖需要通过源码编译安装，可能耗时较长）
-   xmake config -m releasedbg
-   ```
-
-1. 构建并安装
-
-   ```bash
-   # 构建
-   xmake build
-   # 安装
-   xmake install
-   # 安装到当前虚拟环境
-   uv sync --reinstall-package nonebot_plugin_htmlkit-plugin-htmlkit
-   ```
-
-   如果对 [litehtml](./litehtml) 做了修改，则需要重新构建它：
-
-   ```bash
-   xmake require --force litehtml
-   # 或者用以下更 dirty 但是快速的方法
-   rm -r build
-   xmake clean --all
-   # 重新构建并安装
-   xmake build
-   xmake install
-   uv sync --reinstall-package nonebot_plugin_htmlkit-plugin-htmlkit
-   ```
-
 #### 许可证
 
-本插件的 [Python 部分](nonebot_plugin_htmlkit) 在 MIT 许可证下发布，[C++ 部分](./core) 在 LGPL-3.0-or-later 许可证下发布。
+MIT

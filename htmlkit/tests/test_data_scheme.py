@@ -22,11 +22,10 @@ FORMATS = ["png", "jpeg"]
 async def test_render_image_from_data_scheme(
     html_name, image_format, regen_ref, output_img_dir, native
 ):
-    from nonebot_plugin_htmlkit import (
-        combined_css_fetcher,
-        combined_img_fetcher,
+    from htmlkit import (
+        DEFAULT_FETCHER,
+        NoneFetcher,
         html_to_pic,
-        none_fetcher,
     )
 
     html_path = DATA_SCHEME_PATH / f"{html_name}.html"
@@ -39,8 +38,7 @@ async def test_render_image_from_data_scheme(
         allow_refit=True,
         image_format=image_format,
         native_data_scheme=native,
-        css_fetch_fn=none_fetcher if native else combined_css_fetcher,
-        img_fetch_fn=none_fetcher if native else combined_img_fetcher,
+        fetcher=NoneFetcher() if native else DEFAULT_FETCHER,
     )
     assert img_bytes.startswith(
         b"\x89PNG\r\n\x1a\n" if image_format == "png" else b"\xff\xd8"

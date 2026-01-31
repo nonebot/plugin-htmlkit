@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 from utils import assert_image_equal
 
+from htmlkit import template_to_pic
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("image_format", ["png", "jpeg"])
 async def test_render_templates_1(image_format, regen_ref, output_img_dir):
-    from nonebot_plugin_htmlkit import template_to_pic
-
     template_path = Path(__file__).parent / "templates" / "test_1"
 
     image_bytes = await template_to_pic(

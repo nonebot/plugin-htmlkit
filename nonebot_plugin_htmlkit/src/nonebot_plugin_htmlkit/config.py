@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from nonebot.compat import model_fields
 
 
-class FcConfig(BaseModel):
+class NoneBotFcConfig(BaseModel):
     """覆盖 Fontconfig 的配置选项
 
     参考 https://fontconfig.pages.freedesktop.org/fontconfig/fontconfig-user
@@ -30,9 +30,9 @@ class FcConfig(BaseModel):
 
 
 @contextmanager
-def set_fc_environ(config: FcConfig):
+def set_fc_environ(config: NoneBotFcConfig):
     old_values = {}
-    fields = model_fields(FcConfig)
+    fields = model_fields(NoneBotFcConfig)
     for field in fields:
         name = field.name.upper()
         value = getattr(config, field.name)

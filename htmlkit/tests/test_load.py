@@ -1,10 +1,10 @@
 import pytest
 
+from htmlkit import html_to_pic
+
 
 @pytest.mark.asyncio
 async def test_render_basic_png():
-    from nonebot_plugin_htmlkit import html_to_pic
-
     img_bytes = await html_to_pic(
         "<html><body><h1>Hello, World!</h1><p>This is a test.</p></body></html>"
     )
@@ -13,8 +13,6 @@ async def test_render_basic_png():
 
 @pytest.mark.asyncio
 async def test_render_basic_jpeg():
-    from nonebot_plugin_htmlkit import html_to_pic
-
     img_bytes = await html_to_pic(
         "<html><body><h1>Hello, World!</h1><p>This is a test.</p></body></html>",
         image_format="jpeg",
@@ -25,8 +23,6 @@ async def test_render_basic_jpeg():
 
 @pytest.mark.asyncio
 async def test_render_fetch_image_png():
-    from nonebot_plugin_htmlkit import html_to_pic
-
     img_bytes = await html_to_pic(
         '<html><body><h1>Hello, World!</h1><img src="https://www.python.org/static/community_logos/python-logo.png"></body></html>'
     )

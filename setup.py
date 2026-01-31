@@ -47,6 +47,7 @@ class EggInfo(egg_info):
         get_submodules()
         self.filelist.recursive_include("repo", "*.lua")
         self.filelist.include("core/**")
+        self.filelist.exclude("**/tests/**")
         self.filelist.extend(["xmake.lua", "gitmodules.lock"])
 
 
@@ -59,12 +60,12 @@ class SDist(sdist):
             get_submodules(re_update=True)  # ensure submodules are correct
 
 
-EXT_NAME = "nonebot_plugin_htmlkit.core"
+EXT_NAME = "htmlkit.core"
 
 
 class XmakeBuildExt(build_ext):
     def build_extensions(self):
-        build_target = Path(self.build_lib) / "nonebot_plugin_htmlkit"
+        build_target = Path(self.build_lib) / "htmlkit"
         build_target.mkdir(parents=True, exist_ok=True)
         bindist_dir = Path("bindist")
         core_dylib = bindist_dir / "core.dylib"
@@ -97,8 +98,8 @@ setup(
         "build_ext": XmakeBuildExt,
     },
     ext_modules=ext_modules,
-    packages=["nonebot_plugin_htmlkit"],
-    package_data={"nonebot_plugin_htmlkit": ["templates/*"]},
+    packages=["htmlkit"],
+    package_data={"htmlkit": ["templates/*"]},
     options={
         "bdist_wheel": {
             "py_limited_api": None

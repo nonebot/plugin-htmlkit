@@ -1,22 +1,17 @@
 [project]
-name = "htmlkit"
+name = "nonebot-plugin-htmlkit"
 version = "0.1.0-rc6"
-description = "Lightweight HTML rendering component"
+description = "Lightweight HTML rendering plugin for NoneBot"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aiofiles>=0.8.0",
-    "jinja2>=3.0.3",
-    "loguru>=0.7.3",
-    "markdown>=3.3.6",
-    "pydantic>=2.1.0",
-    "pygments>=2.10.0",
-    "pymdown-extensions>=9.1",
+    "htmlkit>=0.1.0-rc6,<0.2.0",
+    "nonebot2~=2.3",
 ]
 maintainers = [
   { name = "Nyuan Zhang", email = "blueglassblock@outlook.com"}
 ]
-license = "MIT AND LGPL-3.0-or-later"
+license = "MIT"
 keywords = ["nonebot", "nonebot2", "htmlkit", "litehtml", "html"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -37,36 +32,22 @@ Repository = "https://github.com/nonebot/plugin-htmlkit.git"
 Issues = "https://github.com/nonebot/plugin-htmlkit/issues"
 
 [build-system]
-requires = ["meson", "ninja", "pip", "setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    { include-group = "build" },
     { include-group = "test" },
-]
-build = [
-    "meson>=1.9.0",
-    "ninja>=1.13.0",
-    "pip>=25.2",
-    "setuptools>=80.9.0",
-    "wheel>=0.45.1",
 ]
 test = [
     "aiohttp>=3.13.3",
-    "httpx>=0.28.1",
+    "nonebot2[httpx]>=2.4.3",
+    "nonebug>=0.4.3",
     "numpy>=2.2.6",
     "pillow>=11.3.0",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
 ]
-
-[tool.uv.workspace]
-members = [".", "nonebot_plugin_htmlkit"]
-
-[tool.uv.sources]
-htmlkit = { workspace = true }
-nonebot_plugin_htmlkit = { workspace = true }
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -105,7 +86,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
-known-first-party = ["htmlkit", "tests/*"]
+known-first-party = ["nonebot", "tests/*"]
 extra-standard-library = ["typing_extensions"]
 
 [tool.ruff.lint.flake8-pytest-style]
@@ -114,38 +95,3 @@ mark-parentheses = false
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
-testpaths = ["htmlkit/tests"]
-
-
-[tool.cibuildwheel]
-enable = ["cpython-freethreading"]
-build-frontend = "build[uv]"
-manylinux-x86_64-image = "manylinux_2_34"
-manylinux-aarch64-image = "manylinux_2_34"
-test-command = "pytest"
-test-sources = ["pyproject.toml", "tests/"]
-test-groups = ["test"]
-test-environment = { PYTHON_GIL = "0" }
-
-[tool.cibuildwheel.environment]
-XMAKE_CONFIG_MODE = "release"
-
-[tool.cibuildwheel.windows]
-before-build = "cp %VIRTUAL_ENV%/Scripts/python.exe %VIRTUAL_ENV%/Scripts/python3.exe"
-
-[tool.cibuildwheel.linux]
-before-all = [
-  "if apk --version; then apk add gzip; fi",
-  "if ! xmake --version; then curl -fsSL https://xmake.io/shget.text | prefix=/host/tmp/.local bash; fi"
-]
-
-[tool.cibuildwheel.linux.environment]
-PATH = "/host/tmp/.local/bin:$PATH"
-XMAKE_CONFIG_MODE = "release"
-XMAKE_GLOBALDIR  = "/host/tmp"
-XMAKE_ROOT = "y"
-UV_CACHE_DIR="/host/tmp/setup-uv-cache"

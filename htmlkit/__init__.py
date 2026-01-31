@@ -1,67 +1,38 @@
+from __future__ import annotations
+
 from asyncio import get_running_loop, run_coroutine_threadsafe
 import base64
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import suppress
+from contextvars import ContextVar
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from urllib.parse import unquote, urljoin
 
 import aiofiles
 import jinja2
+from loguru import logger
 import markdown
-
-import nonebot
-from nonebot.drivers import HTTPClientMixin, Request
-from nonebot.log import logger
-from nonebot.plugin import PluginMetadata, get_plugin_config
 
 from . import config, core
 from .config import FcConfig
 
-__plugin_meta__ = PluginMetadata(
-    name="nonebot-plugin-htmlkit",
-    description="轻量级的 HTML 渲染工具",
-    usage="",
-    type="library",
-    homepage="https://github.com/nonebot/plugin-htmlkit",
-    extra={},
-)
+with suppress(ImportError):
+    import httpx
+with suppress(ImportError):
+    import aiohttp
 
-driver = nonebot.get_driver()
-session = None
+_FONTCONFIG_INITIALIZED = False
 
 
-def init_fontconfig(**kwargs: Any):
+def init_fontconfig(fc_config: FcConfig | None = None) -> None:
+    global _FONTCONFIG_INITIALIZED
     logger.info("Initializing fontconfig...")
-    with config.set_fc_environ(get_plugin_config(FcConfig)):
+    with config.set_fc_environ(fc_config or FcConfig()):
         core._init_fontconfig_internal()  # pyright: ignore[reportPrivateUsage]
+    _FONTCONFIG_INITIALIZED = True
     logger.info("Fontconfig initialized.")
-
-
-@driver.on_startup
-async def _():
-    global session
-
-    init_fontconfig()
-
-    try:
-        if isinstance(driver, HTTPClientMixin):
-            driver_session = driver.get_session()
-            await driver_session.setup()
-            session = driver_session
-            logger.info("Got HTTP session.")
-    except Exception as e:
-        logger.opt(exception=e).error(
-            "Error while getting HTTP session and setting up."
-        )
-
-
-ImgFetchFn = Callable[[str], Coroutine[Any, Any, bytes | None]]
-CSSFetchFn = Callable[[str], Coroutine[Any, Any, str | None]]
-
-
-async def none_fetcher(_url: str) -> None:
-    return None
 
 
 async def read_file(path: str) -> str:
@@ -79,123 +50,172 @@ def _crop_str(s: str, max_len: int = 50) -> str:
     return s
 
 
-async def data_scheme_img_fetcher(url: str) -> bytes | None:
-    if url.startswith("data:"):
+class Fetcher(Protocol):
+    async def fetch_image(self, url: str) -> bytes | None:
+        raise NotImplementedError()
+
+    async def fetch_css(self, url: str) -> str | None:
+        raise NotImplementedError()
+
+
+class NoneFetcher(Fetcher):
+    async def fetch_image(self, url: str) -> bytes | None:
+        return None
+
+    async def fetch_css(self, url: str) -> bytes | None:
+        return None
+
+
+class BaseDataFetcher(Fetcher):
+    async def get_data(self, url: str) -> bytes | None:
+        raise NotImplementedError()
+
+    async def fetch_image(self, url: str) -> bytes | None:
         try:
-            header, data = url.split(",", 1)
-            if "base64" in header:
-                return base64.b64decode(data)
-            else:
-                return unquote(data).encode("utf-8")
+            data = await self.get_data(url)
+            return data
         except Exception as e:
             logger.opt(exception=e).warning(
-                f"Failed to decode data scheme URL: {_crop_str(url)}"
+                f"Failed to fetch image from URL: {_crop_str(url)}"
             )
-    return None
+        return None
+
+    async def fetch_css(self, url: str) -> str | None:
+        try:
+            data = await self.get_data(url)
+            if data is not None:
+                return data.decode("utf-8")
+        except Exception as e:
+            logger.opt(exception=e).warning(
+                f"Failed to fetch CSS from URL: {_crop_str(url)}"
+            )
+        return None
 
 
-async def filesystem_img_fetcher(url: str) -> bytes | None:
-    if url.startswith("file://"):
-        path = url[7:]
-        if os.path.isfile(path):
+class DataSchemeFetcher(BaseDataFetcher):
+    async def get_data(self, url: str) -> bytes | None:
+        if url.startswith("data:"):
             try:
-                async with aiofiles.open(path, "rb") as f:
-                    return await f.read()
+                header, data = url.split(",", 1)
+                if "base64" in header:
+                    return base64.b64decode(data)
+                else:
+                    return unquote(data).encode("utf-8")
             except Exception as e:
                 logger.opt(exception=e).warning(
-                    f"Failed to read local file {_crop_str(path)}"
+                    f"Failed to decode data scheme URL: {_crop_str(url)}"
                 )
-    return None
-
-
-async def network_img_fetcher(url: str) -> bytes | None:
-    if session is None:
-        logger.critical(
-            "Driver does not support HTTP requests. "
-            "Please initialize NoneBot with HTTP client drivers like HTTPX or AIOHTTP."
-        )
         return None
-    try:
-        response = await session.request(Request("GET", url))
-        if isinstance(response.content, bytes):
+
+
+class FilesystemFetcher(BaseDataFetcher):
+    async def get_data(self, url: str) -> bytes | None:
+        if url.startswith("file://"):
+            path = url[7:]
+            if os.path.isfile(path):
+                try:
+                    async with aiofiles.open(path, "rb") as f:
+                        return await f.read()
+                except Exception as e:
+                    logger.opt(exception=e).warning(
+                        f"Failed to read local file {_crop_str(path)}"
+                    )
+        return None
+
+
+class HttpxNetworkFetcher(BaseDataFetcher):
+    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
+        self.client = client
+
+    async def get_data(self, url: str) -> bytes | None:
+        if self.client is None:
+            self.client = httpx.AsyncClient()
+        try:
+            response = await self.client.get(url)
+            response.raise_for_status()
             return response.content
-        return None
-    except Exception as e:
-        logger.opt(exception=e).warning(f"Failed to fetch resource from {url}")
-    return None
-
-
-async def combined_img_fetcher(url: str) -> bytes | None:
-    content = await data_scheme_img_fetcher(url)
-    if content is not None:
-        return content
-    content = await filesystem_img_fetcher(url)
-    if content is not None:
-        return content
-    return await network_img_fetcher(url)
-
-
-async def data_scheme_css_fetcher(url: str) -> str | None:
-    if url.startswith("data:"):
-        try:
-            header, data = url.split(",", 1)
-            if "base64" in header:
-                return base64.b64decode(data).decode("utf-8")
-            else:
-                return unquote(data)
         except Exception as e:
-            logger.opt(exception=e).warning(
-                f"Failed to decode data scheme URL: {_crop_str(url)}"
-            )
-    return None
+            logger.opt(exception=e).warning(f"Failed to fetch resource from {url}")
+        return None
 
 
-async def filesystem_css_fetcher(url: str) -> str | None:
-    if url.startswith("file://"):
-        path = url[7:]
-        if os.path.isfile(path):
+class AiohttpNetworkFetcher(BaseDataFetcher):
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        self.session = session
+
+    async def get_data(self, url: str) -> bytes | None:
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        try:
+            async with self.session.get(url) as response:
+                response.raise_for_status()
+                return await response.read()
+        except Exception as e:
+            logger.opt(exception=e).warning(f"Failed to fetch resource from {url}")
+        return None
+
+
+class PopularNetworkFetcher(BaseDataFetcher):
+    def __init__(self) -> None:
+        import importlib.util
+
+        self.fetcher = None
+        if importlib.util.find_spec("httpx"):
+            self.fetcher = HttpxNetworkFetcher()
+            return
+        elif importlib.util.find_spec("aiohttp"):
+            self.fetcher = AiohttpNetworkFetcher()
+            return
+
+    async def get_data(self, url: str) -> bytes | None:
+        if self.fetcher is not None:
+            return await self.fetcher.get_data(url)
+        return None
+
+
+class CombinedFetcher(Fetcher):
+    def __init__(self, *fetchers: Fetcher | Iterable[Fetcher]) -> None:
+        self.fetchers: list[Fetcher] = []
+        for fetcher in fetchers:
+            if isinstance(fetcher, Iterable):
+                self.fetchers.extend(fetcher)
+            else:
+                self.fetchers.append(fetcher)
+
+    async def fetch_image(self, url: str) -> bytes | None:
+        for fetcher in self.fetchers:
             try:
-                async with aiofiles.open(path, encoding="utf-8") as f:
-                    return await f.read()
+                data = await fetcher.fetch_image(url)
+                if data is not None:
+                    return data
             except Exception as e:
                 logger.opt(exception=e).warning(
-                    f"Failed to read local CSS file {_crop_str(path)}"
+                    f"Fetcher {fetcher} failed for URL: {_crop_str(url)}"
                 )
-    return None
 
-
-async def network_css_fetcher(url: str) -> str | None:
-    if session is None:
-        logger.critical(
-            "Driver does not support HTTP requests. "
-            "Please initialize NoneBot with HTTP client drivers like HTTPX or AIOHTTP."
-        )
         return None
-    try:
-        response = await session.request(Request("GET", url))
-        if isinstance(response.content, bytes):
+
+    async def fetch_css(self, url: str) -> str | None:
+        for fetcher in self.fetchers:
             try:
-                return response.content.decode("utf-8")
+                data = await fetcher.fetch_css(url)
+                if data is not None:
+                    return data
             except Exception as e:
                 logger.opt(exception=e).warning(
-                    f"Failed to decode CSS from {_crop_str(url)}"
+                    f"Fetcher {fetcher} failed for URL: {_crop_str(url)}"
                 )
         return None
-    except Exception as e:
-        logger.opt(exception=e).warning(
-            f"Failed to fetch CSS resource from {_crop_str(url)}"
-        )
-    return None
 
 
-async def combined_css_fetcher(url: str) -> str | None:
-    content = await data_scheme_css_fetcher(url)
-    if content is not None:
-        return content
-    content = await filesystem_css_fetcher(url)
-    if content is not None:
-        return content
-    return await network_css_fetcher(url)
+DEFAULT_FETCHER: ContextVar[Fetcher] = ContextVar(
+    "DEFAULT_FETCHER",
+    default=CombinedFetcher(
+        DataSchemeFetcher(),
+        FilesystemFetcher(),
+        PopularNetworkFetcher(),
+    ),
+)
 
 
 async def html_to_pic(
@@ -212,8 +232,7 @@ async def html_to_pic(
     jpeg_quality: int = 100,
     lang: str = "zh",
     culture: str = "CN",
-    img_fetch_fn: ImgFetchFn = combined_img_fetcher,
-    css_fetch_fn: CSSFetchFn = combined_css_fetcher,
+    fetcher: Fetcher | None = None,
     native_data_scheme: bool = True,
     urljoin_fn: Callable[[str, str], str] = urljoin,
 ) -> bytes:
@@ -233,15 +252,19 @@ async def html_to_pic(
         jpeg_quality (int, optional): jpeg图片质量, 1-100
         lang (str, optional): 语言
         culture (str, optional): 文化
-        img_fetch_fn (ImgFetchFn, optional): 图片获取函数
-        css_fetch_fn (CSSFetchFn, optional): CSS获取函数
+        fetcher (Fetcher, optional): 资源获取器
         native_data_scheme (bool, optional): 是否使用原生代码解码 base64 data scheme URL
         urljoin_fn (Callable, optional): urljoin函数
 
     Returns:
         bytes: 渲染后的图片字节
     """
+    if not _FONTCONFIG_INITIALIZED:
+        init_fontconfig()
+
     loop = get_running_loop()
+    fetcher = fetcher or DEFAULT_FETCHER.get()
+
     return await core._render_internal(  # pyright: ignore[reportPrivateUsage]
         html,
         base_url,
@@ -254,14 +277,14 @@ async def html_to_pic(
         -1 if image_format == "png" else jpeg_quality,
         lang,
         culture,
-        lambda exc_type, exc_value, exc_traceback: nonebot.logger.opt(
+        lambda exc_type, exc_value, exc_traceback: logger.opt(
             exception=(exc_type, exc_value, exc_traceback)
         ).error("Exception in html_to_pic: "),
         run_coroutine_threadsafe,
         urljoin_fn,
         loop,
-        img_fetch_fn,
-        css_fetch_fn,
+        fetcher.fetch_image,
+        fetcher.fetch_css,
         native_data_scheme,
         False,
     )
@@ -281,8 +304,7 @@ async def debug_html_to_pic(
     jpeg_quality: int = 100,
     lang: str = "zh",
     culture: str = "CN",
-    img_fetch_fn: ImgFetchFn = combined_img_fetcher,
-    css_fetch_fn: CSSFetchFn = combined_css_fetcher,
+    fetcher: Fetcher | None = None,
     native_data_scheme: bool = True,
     urljoin_fn: Callable[[str, str], str] = urljoin,
 ) -> tuple[bytes, str]:
@@ -302,15 +324,19 @@ async def debug_html_to_pic(
         jpeg_quality (int, optional): jpeg图片质量, 1-100
         lang (str, optional): 语言
         culture (str, optional): 文化
-        img_fetch_fn (ImgFetchFn, optional): 图片获取函数
-        css_fetch_fn (CSSFetchFn, optional): CSS获取函数
+        fetcher (Fetcher): 资源获取器
         native_data_scheme (bool, optional): 是否使用原生代码解码 base64 data scheme URL
         urljoin_fn (Callable, optional): urljoin函数
 
     Returns:
         tuple[bytes, str]: 渲染后的图片字节和调试用 HTML 字符串
     """
+    if not _FONTCONFIG_INITIALIZED:
+        init_fontconfig()
+
     loop = get_running_loop()
+    fetcher = fetcher or DEFAULT_FETCHER.get()
+
     return await core._render_internal(  # pyright: ignore[reportPrivateUsage]
         html,
         base_url,
@@ -323,14 +349,14 @@ async def debug_html_to_pic(
         -1 if image_format == "png" else jpeg_quality,
         lang,
         culture,
-        lambda exc_type, exc, tb: nonebot.logger.opt(
-            exception=(exc_type, exc, tb)
-        ).error("Exception in html_to_pic: "),
+        lambda exc_type, exc, tb: logger.opt(exception=(exc_type, exc, tb)).error(
+            "Exception in html_to_pic: "
+        ),
         run_coroutine_threadsafe,
         urljoin_fn,
         loop,
-        img_fetch_fn,
-        css_fetch_fn,
+        fetcher.fetch_image,
+        fetcher.fetch_css,
         native_data_scheme,
         True,
     )
@@ -352,6 +378,7 @@ async def text_to_pic(
     dpi: float = 96.0,
     max_width: int = 500,
     allow_refit: bool = True,
+    fetcher: Fetcher | None = None,
     image_format: Literal["png", "jpeg"] = "png",
     jpeg_quality: int = 100,
 ) -> bytes:
@@ -364,6 +391,7 @@ async def text_to_pic(
         dpi (float, optional): DPI，默认为 96.0
         max_width (int, optional): 图片最大宽度，默认为 500
         allow_refit (bool, optional): 允许根据内容缩小宽度，默认为 True
+        fetcher (Fetcher, optional): 资源获取器
         image_format ("png" | "jpeg", optional): 图片格式, 默认为 "png"
         jpeg_quality (int, optional): jpeg图片质量, 1-100, 默认为 100
 
@@ -376,6 +404,7 @@ async def text_to_pic(
             text=text,
             css=await read_file(css_path) if css_path else await read_tpl("text.css"),
         ),
+        fetcher=fetcher,
         dpi=dpi,
         max_width=max_width,
         base_url=f"file://{css_path or TEMPLATES_PATH}",
@@ -392,8 +421,8 @@ async def md_to_pic(
     *,
     dpi: float = 96.0,
     max_width: int = 500,
-    img_fetch_fn: ImgFetchFn = combined_img_fetcher,
     allow_refit: bool = True,
+    fetcher: Fetcher | None = None,
     image_format: Literal["png", "jpeg"] = "png",
     jpeg_quality: int = 100,
 ) -> bytes:
@@ -406,8 +435,8 @@ async def md_to_pic(
         css_path (str,  optional): css文件路径
         dpi (float, optional): DPI，默认为 96.0
         max_width (int, optional): 图片最大宽度，默认为 500
-        img_fetch_fn (ImgFetchFn, optional): 图片获取函数，默认为 combined_img_fetcher
         allow_refit (bool, optional): 允许根据内容缩小宽度，默认为 True
+        fetcher (Fetcher, optional): 资源获取器
         image_format ("png" | "jpeg", optional): 图片格式, 默认为 "png"
         jpeg_quality (int, optional): jpeg图片质量, 1-100, 默认为 100
 
@@ -450,8 +479,8 @@ async def md_to_pic(
         max_width=max_width,
         device_height=10,
         base_url=f"file://{css_path or TEMPLATES_PATH}",
-        img_fetch_fn=img_fetch_fn,
         allow_refit=allow_refit,
+        fetcher=fetcher,
         image_format=image_format,
         jpeg_quality=jpeg_quality,
     )
@@ -498,8 +527,7 @@ async def template_to_pic(
     max_width: int = 500,
     device_height: int = 600,
     base_url: str | None = None,
-    img_fetch_fn: ImgFetchFn = combined_img_fetcher,
-    css_fetch_fn: CSSFetchFn = combined_css_fetcher,
+    fetcher: Fetcher | None = None,
     allow_refit: bool = True,
     image_format: Literal["png", "jpeg"] = "png",
     jpeg_quality: int = 100,
@@ -517,8 +545,7 @@ async def template_to_pic(
         max_width (int, optional): 图片最大宽度，默认为 500
         device_height (int, optional): 设备高度，默认为 800
         base_url (str | None, optional): 基础路径，默认为 "file://{template.filename}"
-        img_fetch_fn (ImgFetchFn, optional): 图片获取函数
-        css_fetch_fn (CSSFetchFn, optional): css获取函数
+        fetcher (Fetcher, optional): 资源获取器
         allow_refit (bool, optional): 允许根据内容缩小宽度
         image_format ("png" | "jpeg", optional): 图片格式, 默认为 "png"
         jpeg_quality (int, optional): jpeg图片质量, 1-100, 默认为 100
@@ -547,9 +574,30 @@ async def template_to_pic(
         dpi=dpi,
         max_width=max_width,
         device_height=device_height,
-        img_fetch_fn=img_fetch_fn,
-        css_fetch_fn=css_fetch_fn,
+        fetcher=fetcher,
         allow_refit=allow_refit,
         image_format=image_format,
         jpeg_quality=jpeg_quality,
     )
+
+
+__all__ = (
+    "DEFAULT_FETCHER",
+    "AiohttpNetworkFetcher",
+    "BaseDataFetcher",
+    "CombinedFetcher",
+    "DataSchemeFetcher",
+    "FcConfig",
+    "Fetcher",
+    "FilesystemFetcher",
+    "HttpxNetworkFetcher",
+    "NoneFetcher",
+    "PopularNetworkFetcher",
+    "debug_html_to_pic",
+    "html_to_pic",
+    "init_fontconfig",
+    "md_to_pic",
+    "template_to_html",
+    "template_to_pic",
+    "text_to_pic",
+)
